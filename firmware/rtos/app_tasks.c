@@ -37,7 +37,9 @@ __weak void stream_send(const dsp_frame_t *f)
 void app_init(void)
 {
     g_frame_q = xQueueCreate(16, sizeof(dsp_frame_t));
+    printf("[app] queue=%s\n", g_frame_q ? "ok" : "FAIL");
     g_audio_sem = xSemaphoreCreateBinary();
+    printf("[app] sem=%s\n", g_audio_sem ? "ok" : "FAIL");
     if (g_frame_q == NULL || g_audio_sem == NULL) {
         return;
     }
@@ -46,11 +48,16 @@ void app_init(void)
         g_coeffs[i] = 1.0f / FILTER_TAPS;   /* normalized low-pass, DC gain = 1 */
     }
 
-    xTaskCreate(process_task, "proc", 512, NULL, 4, NULL);
-    xTaskCreate(stream_task,  "stream", 384, NULL, 3, NULL);
-    xTaskCreate(monitor_task, "mon",   256, NULL, 1, NULL);
+    printf("[app] proc=%s\n",
+           xTaskCreate(process_task, "proc", 512, NULL, 4, NULL) == pdPASS ? "ok" : "FAIL");
+    printf("[app] stream=%s\n",
+           xTaskCreate(stream_task, "stream", 384, NULL, 3, NULL) == pdPASS ? "ok" : "FAIL");
+    printf("[app] mon=%s\n",
+           xTaskCreate(monitor_task, "mon", 256, NULL, 1, NULL) == pdPASS ? "ok" : "FAIL");
 
+    printf("[app] audio init\n");
     audio_init(g_audio_sem);
+    printf("[app] audio start\n");
     audio_start();
 }
 
@@ -110,6 +117,7 @@ static void stream_task(void *arg)
 {
     dsp_frame_t f;
     (void)arg;
+    printf("[task] stream up\n");
     for (;;) {
         if (xQueueReceive(g_frame_q, &f, portMAX_DELAY) == pdPASS) {
             stream_send(&f);
@@ -122,6 +130,7 @@ static void monitor_task(void *arg)
 {
     uint32_t prev_samples = 0;
     (void)arg;
+    printf("[task] mon up\n");
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         uint32_t now = g_m.samples;
