@@ -1,12 +1,14 @@
 #include "sai_audio.h"
 #include "perf.h"
 
-#include "es8388.h"
-#include "sai.h"
+#include "BSP/ES8388/es8388.h"
+#include "BSP/SAI/sai.h"
+#include "MALLOC/malloc.h"
 
-/* DMA buffers must be 32-byte aligned for per-line cache maintenance. */
-static uint8_t __attribute__((aligned(32))) g_buf0[AUDIO_BUF_BYTES];
-static uint8_t __attribute__((aligned(32))) g_buf1[AUDIO_BUF_BYTES];
+/* DMA buffers live in AXI SRAM (SRAMIN), allocated by the ALIENTEK heap so the
+ * SAI DMA can reach them. DTCM (0x2000_0000) is NOT DMA-accessible. */
+static uint8_t *g_buf0;
+static uint8_t *g_buf1;
 
 static ring_buffer_t     g_rb;
 static uint8_t           g_rb_storage[8192u];   /* power of two */
@@ -20,6 +22,10 @@ void audio_init(SemaphoreHandle_t notify_sem)
 {
     g_sem = notify_sem;
     rb_init(&g_rb, g_rb_storage, sizeof(g_rb_storage));
+
+    /* allocate from SRAMIN (AXI SRAM), 32-byte aligned for line maintenance */
+    g_buf0 = (uint8_t *)(((uint32_t)mymalloc(SRAMIN, AUDIO_BUF_BYTES + 32) + 31u) & ~31u);
+    g_buf1 = (uint8_t *)(((uint32_t)mymalloc(SRAMIN, AUDIO_BUF_BYTES + 32) + 31u) & ~31u);
 
     /* --- ES8388 codec (I2C control, addr 0x10) ------------------------ */
     es8388_init();
@@ -74,4 +80,3 @@ static void audio_rx_cb(void)
         xSemaphoreGiveFromISR(g_sem, &woken);
     }
 }
-

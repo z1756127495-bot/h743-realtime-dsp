@@ -13,6 +13,7 @@
 static float         g_coeffs[FILTER_TAPS];
 static float         g_hist[FILTER_TAPS];
 static QueueHandle_t g_frame_q;
+SemaphoreHandle_t    g_audio_sem;    /* defined here, extern'd in app_tasks.h */
 
 typedef struct {
     volatile uint32_t processed;   /* frames pushed to the streamer */
@@ -116,4 +117,3 @@ static void monitor_task(void *arg)
                (unsigned)perf_ticks());
     }
 }
-
