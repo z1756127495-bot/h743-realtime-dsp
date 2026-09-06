@@ -46,9 +46,9 @@ void app_init(void)
         g_coeffs[i] = 1.0f / FILTER_TAPS;   /* normalized low-pass, DC gain = 1 */
     }
 
-    xTaskCreate(process_task, "proc", 1024, NULL, 4, NULL);
-    xTaskCreate(stream_task,  "stream", 768, NULL, 3, NULL);
-    xTaskCreate(monitor_task, "mon",   512, NULL, 1, NULL);
+    xTaskCreate(process_task, "proc", 512, NULL, 4, NULL);
+    xTaskCreate(stream_task,  "stream", 384, NULL, 3, NULL);
+    xTaskCreate(monitor_task, "mon",   256, NULL, 1, NULL);
 
     audio_init(g_audio_sem);
     audio_start();

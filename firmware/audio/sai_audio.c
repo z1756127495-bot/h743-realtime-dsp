@@ -11,7 +11,7 @@ static uint8_t *g_buf0;
 static uint8_t *g_buf1;
 
 static ring_buffer_t     g_rb;
-static uint8_t           g_rb_storage[8192u];   /* power of two */
+static uint8_t           g_rb_storage[4096u];   /* power of two; >= 2 x SAI half-buffers */
 static SemaphoreHandle_t g_sem;
 static volatile uint32_t g_rx_count;
 static volatile uint32_t g_dropped;
