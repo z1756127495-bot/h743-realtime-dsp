@@ -42,6 +42,8 @@ void audio_init(SemaphoreHandle_t notify_sem)
     sai1_rx_dma_init(g_buf0, g_buf1, AUDIO_BUF_BYTES / 2, 1);  /* 16-bit words */
     sai1_rx_callback = audio_rx_cb;
 
+    printf("[app] dmabuf0=%p dmabuf1=%p\n", (void *)g_buf0, (void *)g_buf1);
+
     /* FreeRTOS ISR-safe API (xSemaphoreGiveFromISR) requires the SAI DMA IRQs
      * at a numeric priority >= configMAX_SYSCALL_INTERRUPT_PRIORITY (=5 here).
      * ALIENTEK's sai.c leaves them at 0/1, which is invalid -> assert. */
