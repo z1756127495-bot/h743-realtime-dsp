@@ -29,15 +29,16 @@ This repository makes those engineering decisions explicit and measurable.
 app/        Host-compilable building blocks (ring buffer, FIR filter)
 test/       Self-contained unit tests, runs on your PC
 docs/       Architecture, performance methodology, cache-coherency deep dive
-firmware/   (planned) target-side FreeRTOS tasks + drivers for the H743
+firmware/   Target-side ICM20608 driver + FreeRTOS task framework for the H743
 ```
 
 ## Project status
 
 - [x] Host-runnable primitives + unit tests + CI (this scaffold)
-- [ ] CubeMX/Keil firmware project for STM32H743IIT6
-- [ ] ICM20608 SPI+FIFO DMA acquisition
-- [ ] FreeRTOS producer / processor / streamer tasks
+- [x] ICM20608 SPI register driver skeleton + FreeRTOS task framework
+- [ ] CubeMX/Keil firmware project wired to the board
+- [ ] ICM20608 FIFO -> DMA + cache maintenance integration
+- [ ] FreeRTOS producer / processor / streamer tasks (task skeleton present)
 - [ ] DSC / latency / jitter measurement report
 - [ ] Cache-coherency write-up (the bug, the diagnosis, the fix)
 
@@ -61,4 +62,3 @@ make test          # Linux / Git Bash / WSL (needs gcc)
 | 2    | ICM20608 SPI + FIFO + DMA; deliberately reproduce the cache bug; fix it; measure DMA throughput |
 | 3    | FreeRTOS producer/processor/streamer tasks; measure interrupt + context-switch latency and jitter; CMSIS-DSP FIR |
 | 4    | USB/UART output; performance report with real numbers; docs; CI; a tagged release |
-
