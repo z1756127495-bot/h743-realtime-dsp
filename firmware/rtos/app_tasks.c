@@ -63,8 +63,6 @@ void app_init(void)
 static void process_task(void *arg)
 {
     fir_t fir;
-    uint8_t frame[AUDIO_FRAME_BYTES];
-    ring_buffer_t *rb = audio_rb_get();
     (void)arg;
 
     float sum_sq = 0.0f;         /* window accumulator for RMS */
@@ -77,12 +75,16 @@ static void process_task(void *arg)
     fir_init(&fir, g_hist, g_coeffs, FILTER_TAPS);
 
     for (;;) {
-        if (xSemaphoreTake(g_audio_sem, pdMS_TO_TICKS(50)) != pdPASS) {
-            continue;   /* timeout: nothing new, just loop */
-        }
-        /* Drain every complete 16-bit stereo frame presently available. */
-        while (rb_read(rb, frame, AUDIO_FRAME_BYTES) == AUDIO_FRAME_BYTES) {
-            int16_t l = (int16_t)((uint16_t)frame[0] | ((uint16_t)frame[1] << 8));
+        if (xSemaphoreTake(g_audio_sem, pdMS_TO_TICKS(50)) != pdPASS)
+            continue;
+
+        /* the just-completed DMA half-buffer; cache maintenance in task context */
+        uint8_t *buf = audio_dma_buf(audio_ready_idx());
+        SCB_InvalidateDCache_by_Addr((uint32_t *)buf, AUDIO_BUF_BYTES);
+
+        for (uint32_t f = 0; f < (AUDIO_BUF_BYTES / AUDIO_FRAME_BYTES); f++) {
+            uint8_t *fr = buf + f * AUDIO_FRAME_BYTES;
+            int16_t l = (int16_t)((uint16_t)fr[0] | ((uint16_t)fr[1] << 8));
             float x  = (float)l / 32768.0f;
             float xf = fir_process(&fir, x);
 
