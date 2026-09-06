@@ -8,7 +8,7 @@
 #include <math.h>
 
 #define FILTER_TAPS 16u
-#define RMS_WINDOW  256u       /* samples for the RMS/peak release window */
+#define REPORT_EVERY 2048u     /* samples per RMS/peak summary (≈23 lines/s @48k) */
 
 static float         g_coeffs[FILTER_TAPS];
 static float         g_hist[FILTER_TAPS];
@@ -62,6 +62,11 @@ static void process_task(void *arg)
     ring_buffer_t *rb = audio_rb_get();
     (void)arg;
 
+    float sum_sq = 0.0f;         /* window accumulator for RMS */
+    float peak   = 0.0f;         /* window peak |sample| */
+    uint32_t window = 0;         /* samples in current window */
+    float last_filt = 0.0f;
+
     fir_init(&fir, g_hist, g_coeffs, FILTER_TAPS);
 
     for (;;) {
@@ -74,16 +79,27 @@ static void process_task(void *arg)
             float x  = (float)l / 32768.0f;
             float xf = fir_process(&fir, x);
 
-            dsp_frame_t f;
-            f.filt = xf;
-            f.peak = fabsf(xf);
-            f.rms  = xf * xf;          /* placeholder; accumulate over RMS_WINDOW */
-            f.seq  = g_m.samples++;
+            last_filt = xf;
+            sum_sq   += xf * xf;
+            if (fabsf(xf) > peak) peak = fabsf(xf);
+            g_m.samples++;
 
-            if (xQueueSend(g_frame_q, &f, 0) == pdPASS) {
-                g_m.processed++;
-            } else {
-                g_m.dropped++;
+            /* emit one readable summary per window instead of per sample */
+            if (++window >= REPORT_EVERY) {
+                dsp_frame_t f;
+                f.filt = last_filt;
+                f.rms  = sqrtf(sum_sq / (float)window);
+                f.peak = peak;
+                f.seq  = g_m.samples;
+
+                if (xQueueSend(g_frame_q, &f, 0) == pdPASS) {
+                    g_m.processed++;
+                } else {
+                    g_m.dropped++;
+                }
+                sum_sq = 0.0f;
+                peak   = 0.0f;
+                window = 0;
             }
         }
     }
