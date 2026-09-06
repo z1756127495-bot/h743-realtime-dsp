@@ -11,7 +11,7 @@ static uint8_t *g_buf0;
 static uint8_t *g_buf1;
 
 static ring_buffer_t     g_rb;
-static uint8_t           g_rb_storage[4096u];   /* power of two; >= 2 x SAI half-buffers */
+static uint8_t           g_rb_storage[16384u];  /* power of two; >= 2 x SAI half-buffers */
 static SemaphoreHandle_t g_sem;
 static volatile uint32_t g_rx_count;
 static volatile uint32_t g_dropped;
@@ -75,7 +75,7 @@ static void audio_rx_cb(void)
     /* invalidate the 32-byte lines covering this DMA buffer */
     SCB_InvalidateDCache_by_Addr((uint32_t *)done_buf, AUDIO_BUF_BYTES);
 
-    /* only push a whole half-buffer; never a partial (keeps frame alignment) */
+    /* push a whole half-buffer into the SPSC ring (keeps frame alignment) */
     if (rb_free(&g_rb) >= AUDIO_BUF_BYTES) {
         rb_write(&g_rb, done_buf, AUDIO_BUF_BYTES);
     } else {
