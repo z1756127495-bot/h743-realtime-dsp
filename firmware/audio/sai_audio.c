@@ -11,7 +11,7 @@ static uint8_t *g_buf0;
 static uint8_t *g_buf1;
 
 static ring_buffer_t     g_rb;
-static uint8_t           g_rb_storage[16384u];  /* power of two; >= 2 x SAI half-buffers */
+static uint8_t           g_rb_storage[4096u];   /* power of two; >= 2 x SAI half-buffers */
 static SemaphoreHandle_t g_sem;
 static volatile uint32_t g_rx_count;
 static volatile uint32_t g_dropped;
@@ -32,6 +32,7 @@ void audio_init(SemaphoreHandle_t notify_sem)
     es8388_adda_cfg(0, 1);       /* DAC off, ADC on  */
     es8388_input_cfg(0);         /* MIC input channel */
     es8388_mic_gain(8);
+    es8388_sai_cfg(0, 3);        /* codec SAI format = standard, 16-bit data */
 
     /* --- SAI1 (I2S) master/slave pair, 16-bit -------------------------- */
     sai1_saia_init(0, 1, 4);     /* Block A / master, 16-bit */
