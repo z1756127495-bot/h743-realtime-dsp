@@ -30,7 +30,6 @@ int main(void)
 
     /* ALIENTEK heap regions; audio DMA buffers come from SRAMIN (AXI SRAM) */
     my_mem_init(SRAMIN);
-    my_mem_init(SRAMEX);
     my_mem_init(SRAM12);
     my_mem_init(SRAM4);
     my_mem_init(SRAMDTCM);
@@ -43,4 +42,3 @@ int main(void)
 
     for (;;) { }
 }
-
