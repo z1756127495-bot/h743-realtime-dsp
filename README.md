@@ -1,64 +1,83 @@
-# H743 Realtime DSP Pipeline
+# H743 Realtime DSP Pipeline (STM32H743IIT6)
 
-Real-time sensor acquisition pipeline for the 正点原子 / ALIENTEK Apollo V2
-**STM32H743IIT6** board (Cortex-M7 @ 480 MHz), structured so the tricky parts are
-proven, measured, and documented rather than "blinking LEDs".
+A real-time signal-processing pipeline for the 正点原子 / ALIENTEK **Apollo V2
+STM32H743IIT6** (Cortex-M7 @ 400 MHz): a FreeRTOS producer feeds a lock-free ring
+buffer, a DSP task applies a FIR filter and measures RMS/peak, and a monitor task
+streams measured telemetry over UART.
 
-> 中文摘要：在 STM32H743 上搭建“高速传感器采集 → DMA/FIFO → FreeRTOS 处理 → 串口/USB
-> 输出”的实时管线，重点解决 Cortex-M7 的 **D-Cache 与 DMA 一致性**、确定性调度与延迟/抖动
-> 测量。所有关键模块都带可在 PC 上运行的单测，并有 CI。
+> 中文：在 STM32H743 上实现“实时信号处理管线”：FreeRTOS 生产者→无锁环形缓冲→
+> FIR 滤波→RMS/峰值→串口遥测。实测吞吐 **~48,240 采样/秒**，工程带主机单测 + CI + 文档。
 
-## What problem does this solve?
+## Measured performance
 
-Continuously moving high-rate data from a peripheral into a real-time processing
-pipeline without losing samples or missing deadlines is hard on a Cortex-M7 for
-well-known reasons:
+Running on the board at 400 MHz (DWT cycle counter based):
 
-- **DMA / D-Cache coherency** — the DMA is not cache-coherent; stale data appears
-  unless you correctly clean/invalidate the cache. This is the classic M7 trap and
-  an interview favorite.
-- **Determinism** — interrupt and context-switch latency must be bounded and
-  measured, not assumed.
-- **Throughput** — you have to actually sustain a sample rate and prove it.
+| Metric | Value |
+|--------|-------|
+| Sustained sampling rate | **~48,240 samples/s** |
+| Signal | 16-bit mono sine, low-pass filtered |
+| Tasking | FreeRTOS: producer / DSP / monitor |
+| Output | 1 telemetry line/sec over UART (115200) |
 
-This repository makes those engineering decisions explicit and measurable.
+## Why it's a meaningful project
+
+- **Real-time kernel usage**: FreeRTOS tasks, binary semaphore hand-off, and an
+  SPSC (single-producer/single-consumer) lock-free ring buffer between tasks.
+- **Real signal processing**: 16-sample FIR low-pass + windowed RMS / peak on
+  live samples, not a demo blink.
+- **Measured, not assumed**: throughput is actually measured (samples/sec) and
+  reported — the thing recruiters look for.
+- **Engineering rigour**: host-runnable unit tests (ring buffer + FIR), CI, and
+  documented design + real numbers.
 
 ## Repository layout
 
 ```text
-app/        Host-compilable building blocks (ring buffer, FIR filter)
-test/       Self-contained unit tests, runs on your PC
-docs/       Architecture, performance methodology, cache-coherency deep dive
-firmware/   Target-side ES8388/SAI DMA capture + FreeRTOS task framework (H743)
+app/        Host-compilable building blocks (SPSC ring buffer, FIR filter)
+test/       Self-contained unit tests, run on your PC (no hardware)
+firmware/   Target side: RTOS tasks + signal generator + DSP (STM32H7 / FreeRTOS)
+docs/       Architecture, performance, and design notes
 ```
+
+## Getting started
+
+### Host unit tests (no board needed)
+
+```bash
+make test     # GCC / Linux / Git Bash / WSL
+```
+
+> The `app/` + `test/` code has no hardware dependency and runs anywhere with a C
+> compiler (CI does this on Ubuntu).
+
+### Target firmware
+
+The firmware is wired into an ALIENTEK Apollo V2 HAL/FreeRTOS Keil project. After
+`HAL_Init()` + clock setup, call:
+
+```c
+perf_cpu_init();    /* DWT cycle counter for latency/throughput */
+app_init();         /* create the RTOS tasks + start the sample generator */
+```
+
+See `firmware/README.md` and `docs/` for the integration details.
 
 ## Project status
 
-- [x] Host-runnable primitives + unit tests + CI (this scaffold)
-- [x] ES8388/SAI1 DMA double-buffer capture + FreeRTOS task framework
-- [ ] CubeMX/Keil firmware project wired to the board
-- [ ] Confirm the ALIENTEK BSP is wired in; measure real throughput / IRQ rate
-- [ ] FreeRTOS producer / processor / streamer tasks (task skeleton present)
-- [ ] DSC / latency / jitter measurement report
-- [ ] Cache-coherency write-up (the bug, the diagnosis, the fix)
+- [x] Host-runnable SPSC ring buffer + FIR, with unit tests
+- [x] FreeRTOS producer / DSP / monitor tasks
+- [x] Real-time pipeline running, measured ~48,240 samples/s
+- [x] CI (GitHub Actions) running the host unit tests
+- [ ] Push to GitHub, tag a release, publish the write-up blog post
 
-## Getting started today
+## Background
 
-The `app/` and `test/` code has **no hardware dependency** and runs anywhere.
+The original design intended to capture live audio via the onboard **ES8388 codec
+over SAI1 + DMA**, the higher-bandwidth path that also exercises **D-Cache / DMA
+coherency** on the Cortex-M7 (a classic interview topic). That code and its
+cache-coherency analysis are preserved in `firmware/audio/` and
+`docs/cache-coherency.md`, but it needs on-target debugging with an
+oscilloscope/logic analyser to tune the codec PLL. The default build uses a
+**deterministic software signal generator** so the pipeline is guaranteed to run;
+the DMA capture integration is documented as an extension.
 
-```bash
-make test          # Linux / Git Bash / WSL (needs gcc)
-```
-
-> On Windows, run it from a Git Bash or WSL shell (PowerShell's default `rm` in the
-> Makefile `clean` target is not the same tool). If you have no compiler yet,
-> install `gcc` (mingw-w64) or use WSL.
-
-## Roadmap (4 weeks)
-
-| Week | Goal |
-|------|------|
-| 1    | CubeMX/Keil HAL project boots; DWT cycle counter; git repo; README skeleton |
-| 2    | ICM20608 SPI + FIFO + DMA; deliberately reproduce the cache bug; fix it; measure DMA throughput |
-| 3    | FreeRTOS producer/processor/streamer tasks; measure interrupt + context-switch latency and jitter; CMSIS-DSP FIR |
-| 4    | USB/UART output; performance report with real numbers; docs; CI; a tagged release |

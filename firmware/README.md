@@ -1,55 +1,44 @@
-# Firmware (STM32H743IIT6) — real-time audio DSP pipeline
+# Firmware — real-time DSP pipeline (STM32H743IIT6, FreeRTOS)
 
-Target side. Designed to be dropped into an **ALIENTEK Apollo V2 H743 example
-project** (CubeMX/HAL + Keil MDK5). The board's onboard **ES8388 audio codec**
-is the high-rate source: audio in → I2S(SAI1) → DMA double buffer → ring buffer
-→ FreeRTOS DSP task → stream out.
+Default target path for the ALIENTEK Apollo V2 H743. The pipeline runs
+out-of-the-box with a **deterministic software signal generator** (no codec/DMA
+clock to tune), so it reliably demonstrates the RTOS + DSP + measurement stack.
 
-> Why audio instead of the IMU: the onboard six-axis (SH3001 / QMI8658A) is on
-> **I2C**, which caps at ~50 KB/s and cannot sustain the high data rate needed to
-> demonstrate DMA + D-Cache coherency. The audio codec gives a genuine
-> 192 KB/s @ 48 kHz stream and a real DSP problem.
-
-## Layout
+## Pipeline
 
 ```text
-audio/      ES8388 + SAI1 DMA-capture module (double buffer + cache handling)
-rtos/       FreeRTOS tasks + DWT-based perf counter
-../../app/  host-tested primitives (ring buffer, FIR) shared with CI
+signal_src task (prio 3)   →  SPSC ring buffer  →  DSP task (prio 4: FIR + RMS/peak)
+        │ 48 samples / 1 ms tick                    │
+        └── xSemaphoreGive ─────────────────────────┘
+monitor task (prio 1, 1 Hz) → UART telemetry:  [mon] sps=N rms=... peak=...
 ```
 
-## Files you must add from the ALIENTEK example
-
-The `audio/` module calls the proven ALIENTEK BSP driver, so copy these into the
-project (they are already in the Apollo example):
+## Files
 
 ```text
-Drivers/BSP/ES8388/es8388.c/.h     (codec, I2C addr 0x10)
-Drivers/BSP/SAI/sai.c/.h           (SAI1 + DMA, pins PE2/PE3/PE4/PE5/PE6 AF6)
-Drivers/BSP/IIC/myiic.c/.h         (codec control bus)
+signal_src/   software 16-bit sine generator (producer task)
+rtos/         app_tasks: DSP task + monitor;  perf.h : DWT cycle counter
+app/          host-tested SPSC ring buffer + FIR
+audio/        (extension) ES8388 + SAI1 + DMA capture; needs on-target tuning
 ```
 
-## Wiring in `main()`
+## Build / run
+
+On the ALIENTEK HAL+FreeRTOS Keil project: copy `app/`, `signal_src/`,
+`rtos/audio*/` into a source group, add the include path, and in `main()`:
 
 ```c
-perf_cpu_init();          // enable DWT cycle counter
-app_init();               // creates tasks + initialises & starts SAI audio
+perf_cpu_init();
+app_init();          // creates tasks + starts the generator
 ```
 
-No extra pin configuration is required — the ALIENTEK BSP already hard-codes the
-board's SAI1 pin mapping.
+Open UART 115200: once per second you get `[mon] sps=... rms=... peak=...`.
+`sps` is the real measured throughput (~48,240 samples/s at 400 MHz).
 
-## The cache-coherency point (read this for interviews)
+## Extension: live audio via the codec (SAI1 + DMA)
 
-`audio/sai_audio.c` does a **targeted** `SCB_InvalidateDCache_by_Addr` on the DMA
-buffer in the RX ISR, before the CPU reads it. The ALIENTEK driver instead calls
-`SCB_CleanInvalidateDCache()` **after** the callback — i.e. too late and too
-coarse. This is the exact M7 DMA/D-Cache trap, and it is the project's technical
-highlight. See `../../docs/cache-coherency.md`.
-
-## Week-2 to-dos
-
-- Confirm measured throughput (`[mon] sps=` should be ~48000) and DMA IRQ rate.
-- Replace `stream_send()` printf with USB CDC or Ethernet (lwIP) transport.
-- Add the DMA→cache maintenance cost measurement into `docs/performance.md`.
+`firmware/audio/` contains the ES8388 codec + SAI1 + DMA capture that exercises
+**D-Cache / DMA coherency**. It is not the default build because the codec's PLL
+clock (PLL2) must be tuned on-target (oscilloscope / logic analyser). The design
+and cache-coherency analysis are in `../docs/cache-coherency.md`.
 
