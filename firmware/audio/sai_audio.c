@@ -11,7 +11,7 @@ static uint8_t *g_buf0;
 static uint8_t *g_buf1;
 
 static ring_buffer_t     g_rb;
-static uint8_t           g_rb_storage[4096u];   /* power of two; >= 2 x SAI half-buffers */
+static uint8_t          *g_rb_storage;
 static SemaphoreHandle_t g_sem;
 static volatile uint32_t g_rx_count;
 static volatile uint32_t g_dropped;
@@ -21,11 +21,12 @@ static void audio_rx_cb(void);
 void audio_init(SemaphoreHandle_t notify_sem)
 {
     g_sem = notify_sem;
-    rb_init(&g_rb, g_rb_storage, sizeof(g_rb_storage));
 
     /* allocate from SRAMIN (AXI SRAM), 32-byte aligned for line maintenance */
     g_buf0 = (uint8_t *)(((uint32_t)mymalloc(SRAMIN, AUDIO_BUF_BYTES + 32) + 31u) & ~31u);
     g_buf1 = (uint8_t *)(((uint32_t)mymalloc(SRAMIN, AUDIO_BUF_BYTES + 32) + 31u) & ~31u);
+    g_rb_storage = (uint8_t *)mymalloc(SRAMIN, 16384u);   /* SPSC ring, keeps .bss small */
+    rb_init(&g_rb, g_rb_storage, 16384u);
 
     /* --- ES8388 codec (I2C control, addr 0x10) ------------------------ */
     es8388_init();
