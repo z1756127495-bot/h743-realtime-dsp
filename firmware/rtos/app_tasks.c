@@ -57,8 +57,6 @@ void app_init(void)
 
     printf("[app] audio init\n");
     audio_init(g_audio_sem);
-    printf("[app] audio start\n");
-    audio_start();
 }
 
 /* --- consumer of the SAI DMA ring buffer --------------------------------- */
@@ -74,6 +72,8 @@ static void process_task(void *arg)
     uint32_t window = 0;         /* samples in current window */
     float last_filt = 0.0f;
 
+    printf("[task] proc up, starting audio\n");
+    audio_start();               /* start SAI DMA once the scheduler is running */
     fir_init(&fir, g_hist, g_coeffs, FILTER_TAPS);
 
     for (;;) {
