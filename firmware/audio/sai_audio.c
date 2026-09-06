@@ -29,6 +29,8 @@ void audio_init(SemaphoreHandle_t notify_sem)
     es8388_input_cfg(0);         /* MIC input channel */
     es8388_mic_gain(8);
     es8388_sai_cfg(0, 3);        /* codec SAI format = standard, 16-bit data */
+    es8388_hpvol_set(25);        /* codec headphone on (matches ALIENTEK recorder) */
+    es8388_spkvol_set(25);       /* codec speaker on  (matches ALIENTEK recorder) */
 
     /* --- SAI1 (I2S) master/slave pair, 16-bit -------------------------- */
     sai1_saia_init(0, 1, 4);     /* Block A / master, 16-bit */
@@ -64,4 +66,3 @@ static void audio_rx_cb(void)
         xSemaphoreGiveFromISR(g_sem, &woken);
     }
 }
-
