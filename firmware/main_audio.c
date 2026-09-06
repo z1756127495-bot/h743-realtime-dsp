@@ -24,6 +24,7 @@ int main(void)
     sys_stm32_clock_init(160, 5, 2, 4); /* CPU @ 400 MHz */
     delay_init(400);
     usart_init(115200);                 /* printf -> UART1 (CH340 USB-serial) */
+    printf("[boot] uart ok\n");
     mpu_memory_protection();
     led_init();
     key_init();
@@ -36,7 +37,9 @@ int main(void)
     my_mem_init(SRAMITCM);
 
     perf_cpu_init();                    /* DWT cycle counter (latency/throughput) */
+    printf("[boot] before app_init\n");
     app_init();                         /* create tasks + start ES8388/SAI capture */
+    printf("[boot] after app_init, starting scheduler\n");
 
     vTaskStartScheduler();              /* never returns */
 
