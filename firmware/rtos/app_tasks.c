@@ -2,127 +2,93 @@
 #include "ring_buffer.h"
 #include "dsp_fir.h"
 #include "perf.h"
-#include "icm20608.h"
+#include "sai_audio.h"
 
 #include <stdio.h>
-#include <string.h>
+#include <math.h>
 
-#define RAW_RB_SIZE       2048u       /* power of two */
-#define FILTER_TAPS        16u
-/* --- static storage ------------------------------------------------------ */
-static uint8_t     g_rb_storage[RAW_RB_SIZE];
-static ring_buffer_t g_rb;
+#define FILTER_TAPS 16u
+#define RMS_WINDOW  256u       /* samples for the RMS/peak release window */
+
+static float         g_coeffs[FILTER_TAPS];
+static float         g_hist[FILTER_TAPS];
 static QueueHandle_t g_frame_q;
 
-static float g_coeffs[FILTER_TAPS];
-static float g_hist[FILTER_TAPS];
-
-/* --- metrics (read by the monitor task) ---------------------------------- */
 typedef struct {
-    volatile uint32_t fifo_samples;     /* produced */
-    volatile uint32_t processed;        /* consumed by DSP */
-    volatile uint32_t fifo_overflows;   /* read when FIFO was empty -> missed data */
-    volatile uint32_t max_fifo_count;   /* watermark for sizing decisions */
+    volatile uint32_t processed;   /* frames pushed to the streamer */
+    volatile uint32_t dropped;     /* frames dropped (queue full / rb overflow) */
+    volatile uint32_t samples;     /* samples processed */
 } acq_metrics_t;
 static volatile acq_metrics_t g_m;
 
-/* --- task prototypes ----------------------------------------------------- */
-static void acq_task(void *arg);
 static void process_task(void *arg);
 static void stream_task(void *arg);
 static void monitor_task(void *arg);
 
-/* Weak default: stream over UART via printf. Replace with USB CDC / Ethernet. */
+/* Weak default: stream over UART via printf. Replace with USB CDC/Ethernet. */
 __weak void stream_send(const dsp_frame_t *f)
 {
-    printf("SEQ=%lu acc_filt=%.4f acc_rms=%.4f gyro_rms=%.4f temp=%.1f\n",
-           (unsigned long)f->seq, (double)f->acc_x_filt,
-           (double)f->acc_rms, (double)f->gyro_rms, (double)f->temp_c);
+    printf("SEQ=%lu filt=%.4f rms=%.4f peak=%.4f\n",
+           (unsigned long)f->seq, (double)f->filt,
+           (double)f->rms, (double)f->peak);
 }
 
 void app_init(void)
 {
-    rb_init(&g_rb, g_rb_storage, RAW_RB_SIZE);
-    g_frame_q = xQueueCreate(8, sizeof(dsp_frame_t));
-    if (g_frame_q == NULL) {
+    g_frame_q = xQueueCreate(16, sizeof(dsp_frame_t));
+    g_audio_sem = xSemaphoreCreateBinary();
+    if (g_frame_q == NULL || g_audio_sem == NULL) {
         return;
     }
 
-    /* A simple low-pass FIR, normalized so DC gain = 1 */
     for (uint32_t i = 0; i < FILTER_TAPS; i++) {
-        g_coeffs[i] = 1.0f / FILTER_TAPS;
+        g_coeffs[i] = 1.0f / FILTER_TAPS;   /* normalized low-pass, DC gain = 1 */
     }
 
-    xTaskCreate(acq_task,    "acq",    1024, NULL, 5, NULL);
-    xTaskCreate(process_task, "proc",  1024, NULL, 4, NULL);
+    xTaskCreate(process_task, "proc", 1024, NULL, 4, NULL);
     xTaskCreate(stream_task,  "stream", 768, NULL, 3, NULL);
-    xTaskCreate(monitor_task, "mon",    512, NULL, 1, NULL);
+    xTaskCreate(monitor_task, "mon",   512, NULL, 1, NULL);
+
+    audio_init(g_audio_sem);
+    audio_start();
 }
 
-/* --- producer: ICM20608 FIFO -> 12-byte frame -> SPSC ring buffer -------- */
-static void acq_task(void *arg)
-{
-    uint8_t raw[IMU_SAMPLE_BYTES];
-    (void)arg;
-
-    for (;;) {
-        uint16_t avail = 0;
-        icm_fifo_available(&g_imu, &avail);
-
-        if (avail >= IMU_SAMPLE_BYTES) {
-            if (avail > g_m.max_fifo_count) {
-                g_m.max_fifo_count = avail;
-            }
-            if (icm_fifo_read(&g_imu, raw, IMU_SAMPLE_BYTES) == HAL_OK) {
-                /* only write a whole frame; never a partial (keeps alignment) */
-                if (rb_free(&g_rb) >= IMU_SAMPLE_BYTES) {
-                    rb_write(&g_rb, raw, IMU_SAMPLE_BYTES);
-                    g_m.fifo_samples++;
-                }
-            }
-        }
-        /* In the DMA/ISR design this vTaskDelay is replaced by blocking on a
-         * semaphore signalled by the FIFO data-ready interrupt. */
-        vTaskDelay(pdMS_TO_TICKS(1));
-    }
-}
-
-/* --- DSP: consume frames, filter, push processed frames ------------------ */
+/* --- consumer of the SAI DMA ring buffer --------------------------------- */
 static void process_task(void *arg)
 {
-    uint8_t raw[IMU_SAMPLE_BYTES];
     fir_t fir;
+    uint8_t frame[AUDIO_FRAME_BYTES];
+    ring_buffer_t *rb = audio_rb_get();
     (void)arg;
 
     fir_init(&fir, g_hist, g_coeffs, FILTER_TAPS);
 
     for (;;) {
-        if (rb_read(&g_rb, raw, IMU_SAMPLE_BYTES) == IMU_SAMPLE_BYTES) {
-            int16_t a[6];
-            for (int i = 0; i < 6; i++) {
-                a[i] = (int16_t)((uint16_t)((uint16_t)raw[2 * i] << 8) | raw[2 * i + 1]);
-            }
-
-            float ax = a[0] / g_imu.accel_lsb;      /* g */
-            float ax_f = fir_process(&fir, ax);
+        if (xSemaphoreTake(g_audio_sem, pdMS_TO_TICKS(50)) != pdPASS) {
+            continue;   /* timeout: nothing new, just loop */
+        }
+        /* Drain every complete 16-bit stereo frame presently available. */
+        while (rb_read(rb, frame, AUDIO_FRAME_BYTES) == AUDIO_FRAME_BYTES) {
+            int16_t l = (int16_t)((uint16_t)frame[0] | ((uint16_t)frame[1] << 8));
+            float x  = (float)l / 32768.0f;
+            float xf = fir_process(&fir, x);
 
             dsp_frame_t f;
-            f.acc_x_filt = ax_f;
-            f.acc_rms    = ax_f * ax_f;             /* placeholder; accumulates over a window */
-            f.gyro_rms   = (float)a[3] / g_imu.gyro_lsb;
-            f.temp_c     = 0.0f;
-            f.seq        = g_m.fifo_samples;
+            f.filt = xf;
+            f.peak = fabsf(xf);
+            f.rms  = xf * xf;          /* placeholder; accumulate over RMS_WINDOW */
+            f.seq  = g_m.samples++;
 
             if (xQueueSend(g_frame_q, &f, 0) == pdPASS) {
                 g_m.processed++;
+            } else {
+                g_m.dropped++;
             }
-        } else {
-            vTaskDelay(pdMS_TO_TICKS(1));
         }
     }
 }
 
-/* --- streamer: push processed frames out -------------------------------- */
+/* --- streamer ------------------------------------------------------------ */
 static void stream_task(void *arg)
 {
     dsp_frame_t f;
@@ -134,17 +100,20 @@ static void stream_task(void *arg)
     }
 }
 
-/* --- monitor: periodic telemetry + perf counters ------------------------- */
+/* --- monitor: throughput + perf counters --------------------------------- */
 static void monitor_task(void *arg)
 {
-    uint32_t prev = g_m.fifo_samples;
+    uint32_t prev_samples = 0;
     (void)arg;
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        uint32_t produced = g_m.fifo_samples - prev;
-        prev = g_m.fifo_samples;
-        printf("[mon] fps=%lu overflows=%lu fifo_max=%u cpu_ticks=%u\n",
-               (unsigned long)produced, (unsigned long)g_m.fifo_overflows,
-               (unsigned)g_m.max_fifo_count, (unsigned)perf_ticks());
+        uint32_t now = g_m.samples;
+        uint32_t sps  = now - prev_samples;
+        prev_samples = now;
+        printf("[mon] sps=%lu processed=%lu dropped=%lu dma_rx=%u ticks=%u\n",
+               (unsigned long)sps, (unsigned long)g_m.processed,
+               (unsigned long)g_m.dropped, (unsigned)audio_rx_count(),
+               (unsigned)perf_ticks());
     }
 }
+

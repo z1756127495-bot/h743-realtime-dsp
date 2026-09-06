@@ -29,15 +29,15 @@ This repository makes those engineering decisions explicit and measurable.
 app/        Host-compilable building blocks (ring buffer, FIR filter)
 test/       Self-contained unit tests, runs on your PC
 docs/       Architecture, performance methodology, cache-coherency deep dive
-firmware/   Target-side ICM20608 driver + FreeRTOS task framework for the H743
+firmware/   Target-side ES8388/SAI DMA capture + FreeRTOS task framework (H743)
 ```
 
 ## Project status
 
 - [x] Host-runnable primitives + unit tests + CI (this scaffold)
-- [x] ICM20608 SPI register driver skeleton + FreeRTOS task framework
+- [x] ES8388/SAI1 DMA double-buffer capture + FreeRTOS task framework
 - [ ] CubeMX/Keil firmware project wired to the board
-- [ ] ICM20608 FIFO -> DMA + cache maintenance integration
+- [ ] Confirm the ALIENTEK BSP is wired in; measure real throughput / IRQ rate
 - [ ] FreeRTOS producer / processor / streamer tasks (task skeleton present)
 - [ ] DSC / latency / jitter measurement report
 - [ ] Cache-coherency write-up (the bug, the diagnosis, the fix)
