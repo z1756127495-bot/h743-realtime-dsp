@@ -1,0 +1,20 @@
+# Build outputs
+build/
+*.o
+*.elf
+*.hex
+*.bin
+
+# STM32CubeIDE / Keil artifacts
+Debug/
+Release/
+*.launch
+*.uvguix.*
+*.scvd
+
+# Toolchain / IDE
+.vscode/
+.idea/
+*.swp
+*~
+
