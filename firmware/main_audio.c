@@ -21,6 +21,7 @@ int main(void)
 {
     sys_cache_enable();                 /* L1 D-Cache ON (essential for SAI DMA path) */
     HAL_Init();
+    NVIC_SetPriorityGrouping(0);        /* FreeRTOS: all NVIC bits = pre-emption priority */
     sys_stm32_clock_init(160, 5, 2, 4); /* CPU @ 400 MHz */
     delay_init(400);
     usart_init(115200);                 /* printf -> UART1 (CH340 USB-serial) */
