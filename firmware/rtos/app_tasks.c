@@ -8,38 +8,31 @@
 #include <math.h>
 
 #define FILTER_TAPS   16u
-#define REPORT_EVERY  2048u     /* samples per RMS/peak summary */
+#define REPORT_EVERY  2048u     /* samples per window before a summary is made */
 #define SAMPLE_BYTES  SRC_SAMPLE_BYTES
 
-static float         g_coeffs[FILTER_TAPS];
-static float         g_hist[FILTER_TAPS];
-static QueueHandle_t g_frame_q;
-SemaphoreHandle_t    g_audio_sem;   /* extern'd in app_tasks.h */
+static float g_coeffs[FILTER_TAPS];
+static float g_hist[FILTER_TAPS];
+SemaphoreHandle_t g_audio_sem;              /* extern'd in app_tasks.h */
 
 typedef struct {
-    volatile uint32_t processed;   /* summaries pushed to the streamer */
-    volatile uint32_t dropped;     /* summaries dropped (queue full) */
+    volatile uint32_t processed;   /* windows summarised */
     volatile uint32_t samples;     /* samples processed */
 } acq_metrics_t;
 static volatile acq_metrics_t g_m;
 
-static void process_task(void *arg);
-static void stream_task(void *arg);
-static void monitor_task(void *arg);
+/* latest summary, published by the DSP task and printed once/sec by the monitor */
+static volatile float    g_filt, g_rms, g_peak;
+static volatile uint32_t g_seq;
 
-__weak void stream_send(const dsp_frame_t *f)
-{
-    printf("SEQ=%lu filt=%.4f rms=%.4f peak=%.4f\n",
-           (unsigned long)f->seq, (double)f->filt, (double)f->rms, (double)f->peak);
-}
+static void process_task(void *arg);
+static void monitor_task(void *arg);
 
 void app_init(void)
 {
-    g_frame_q = xQueueCreate(16, sizeof(dsp_frame_t));
-    printf("[app] queue=%s\n", g_frame_q ? "ok" : "FAIL");
     g_audio_sem = xSemaphoreCreateBinary();
     printf("[app] sem=%s\n", g_audio_sem ? "ok" : "FAIL");
-    if (g_frame_q == NULL || g_audio_sem == NULL) {
+    if (g_audio_sem == NULL) {
         return;
     }
     for (uint32_t i = 0; i < FILTER_TAPS; i++) {
@@ -48,12 +41,10 @@ void app_init(void)
 
     printf("[app] proc=%s\n",
            xTaskCreate(process_task, "proc", 512, NULL, 4, NULL) == pdPASS ? "ok" : "FAIL");
-    printf("[app] stream=%s\n",
-           xTaskCreate(stream_task, "stream", 384, NULL, 3, NULL) == pdPASS ? "ok" : "FAIL");
     printf("[app] mon=%s\n",
            xTaskCreate(monitor_task, "mon", 256, NULL, 1, NULL) == pdPASS ? "ok" : "FAIL");
 
-    signal_src_init(g_audio_sem);   /* start the sample generator */
+    signal_src_init(g_audio_sem);
 }
 
 static void process_task(void *arg)
@@ -83,30 +74,13 @@ static void process_task(void *arg)
             g_m.samples++;
 
             if (++window >= REPORT_EVERY) {
-                dsp_frame_t f;
-                f.filt = last_filt;
-                f.rms  = sqrtf(sum_sq / (float)window);
-                f.peak = peak;
-                f.seq  = g_m.samples;
-                if (xQueueSend(g_frame_q, &f, 0) == pdPASS) {
-                    g_m.processed++;
-                } else {
-                    g_m.dropped++;
-                }
+                g_filt = last_filt;
+                g_rms  = sqrtf(sum_sq / (float)window);
+                g_peak = peak;
+                g_seq  = g_m.samples;
+                g_m.processed++;
                 sum_sq = 0.0f; peak = 0.0f; window = 0;
             }
-        }
-    }
-}
-
-static void stream_task(void *arg)
-{
-    dsp_frame_t f;
-    (void)arg;
-    printf("[task] stream up\n");
-    for (;;) {
-        if (xQueueReceive(g_frame_q, &f, portMAX_DELAY) == pdPASS) {
-            stream_send(&f);
         }
     }
 }
@@ -118,12 +92,11 @@ static void monitor_task(void *arg)
     printf("[task] mon up\n");
     for (;;) {
         vTaskDelay(pdMS_TO_TICKS(1000));
-        uint32_t now = g_m.samples;
-        uint32_t sps = now - prev;
-        prev = now;
-        printf("[mon] sps=%lu processed=%lu dropped=%lu ticks=%u\n",
+        uint32_t sps = g_m.samples - prev;
+        prev = g_m.samples;
+        printf("[mon] sps=%lu processed=%lu filt=%.4f rms=%.4f peak=%.4f\n",
                (unsigned long)sps, (unsigned long)g_m.processed,
-               (unsigned long)g_m.dropped, (unsigned)perf_ticks());
+               (double)g_filt, (double)g_rms, (double)g_peak);
     }
 }
 
